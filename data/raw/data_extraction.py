@@ -7,9 +7,17 @@ import time
 
 
 
-PATH_ROOT  = Path.cwd().parent
-print(PATH_ROOT)
-DATASET_ROOT = PATH_ROOT /"Sales.csv"
+
+
+
+def data_root() -> Path:
+    PATH_ROOT  = Path.cwd().parent
+    DATASET_ROOT = PATH_ROOT /"Sales.csv"
+    return DATASET_ROOT
+
+DATASET_ROOT = data_root()
+
+
 
 
 
@@ -45,8 +53,6 @@ def validate_file(file_path: str) -> Path:
 
     return path
 
-
-
 # ════════════════════════════════════════════════════════════
 # STEP 2 — LOAD RAW DATA
 # ════════════════════════════════════════════════════════════
@@ -75,6 +81,12 @@ def load_raw_data(path: Path) -> pd.DataFrame:
     logger.info(f" Column names    : {df.columns.tolist()}")
 
     return df
+
+
+
+# ════════════════════════════════════════════════════════════
+# AFTER WE EXTRACT THE DATA WE WILL TRANSFORM IT IN THE  data/interim/data_transformation.py FILE  
+# ════════════════════════════════════════════════════════════
 
 
 
