@@ -1,25 +1,9 @@
 
 #  uv run python data/raw/data_extraction.py  IF YOU WANNA RUN THE CODE USE THIS COMMAND 
 import pandas as pd
-from utils.logs import section,logger
+from utils.logs import section,logger,data_root
 from pathlib import Path
 import time
-
-
-
-
-
-
-def data_root() -> Path:
-    PATH_ROOT  = Path.cwd().parent
-    DATASET_ROOT = PATH_ROOT /"Sales.csv"
-    return DATASET_ROOT
-
-DATASET_ROOT = data_root()
-
-
-
-
 
 
 # ════════════════════════════════════════════════════════════
@@ -88,17 +72,6 @@ def load_raw_data(path: Path) -> pd.DataFrame:
 # AFTER WE EXTRACT THE DATA WE WILL TRANSFORM IT IN THE  data/interim/data_transformation.py FILE  
 # ════════════════════════════════════════════════════════════
 
-
-
-
-
-
-
-
-
-
-
-df = load_raw_data(validate_file(DATASET_ROOT))      
 
 
 

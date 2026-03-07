@@ -7,14 +7,22 @@ from dataclasses import dataclass, field  # create constructors automatically fo
 from typing import List, Callable  #Callable means a function that can be passed as an argument.
 #List is used to indicate that a variable should contain a list of a specific type.
 
-from utils.logs import section, logger
-from data.raw.data_extraction import  DATASET_ROOT, validate_file, load_raw_data
+from utils.logs import section, logger,data_root
+from data.raw.data_extraction import   validate_file, load_raw_data
 
+
+
+# ════════════════════════════════════════════════════════════
+# IMPORTING DATA PATH FUNCTION FROM THE LOGS.PY FILE
+# ════════════════════════════════════════════════════════════
+
+
+DATASET_ROOT = data_root()
 
 
 DATASET = load_raw_data(validate_file(DATASET_ROOT))
 
-print(DATASET.head(5))
+print(DATASET.head(10))
 
 
 
