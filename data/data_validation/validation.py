@@ -16,14 +16,18 @@ from data.raw.data_extraction import   validate_file, load_raw_data
 # IMPORTING DATA PATH FUNCTION FROM THE LOGS.PY FILE
 # ════════════════════════════════════════════════════════════
 
+section("IMPORTING THE DATASET FROM DATA_EXTRACTION.PY")
 
 DATASET_ROOT = data_root()
-
 
 DATASET = load_raw_data(validate_file(DATASET_ROOT))
 
 print(DATASET.head(10))
 
+
+# ════════════════════════════════════════════════════════════
+# PERFORMING DATA VALIDATION PROCESS
+# ════════════════════════════════════════════════════════════
 
 
 
@@ -35,6 +39,9 @@ print(DATASET.head(10))
 
 
 print("This is the dathere after we have transformed it in the")
+
+
+
 
 
 
