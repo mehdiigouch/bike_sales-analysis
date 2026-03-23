@@ -112,5 +112,30 @@ print(unique_df.to_string(index=False))
 
 
 
+# ════════════════════════════════════════════════════════════
+# 8. STATISTICAL SUMMARY — NUMERIC COLUMNS
+# ════════════════════════════════════════════════════════════
+section("8. STATISTICAL SUMMARY — NUMERIC COLUMNS")
+num_df = df.select_dtypes(include="number")
+summary = num_df.describe().T
+summary["range"]    = summary["max"] - summary["min"]
+summary["cv%"]      = (summary["std"] / summary["mean"] * 100).round(2)  # Coefficient of variation
+print(summary.round(2).to_string())
 
 
+# ════════════════════════════════════════════════════════════
+# 9. STATISTICAL SUMMARY — CATEGORICAL COLUMNS
+# ════════════════════════════════════════════════════════════
+section("9. STATISTICAL SUMMARY — CATEGORICAL COLUMNS")
+cat_cols = df.select_dtypes(include="object").columns
+for col in cat_cols:
+    print(f"\n  ── {col} ──")
+    vc = df[col].value_counts()
+    top5 = vc.head(5)
+    for val, cnt in top5.items():
+        pct = round(cnt / len(df) * 100, 1)
+        bar = "█" * int(pct / 2)
+        print(f"    {str(val):<30} {cnt:>7,}  ({pct:>5.1f}%)  {bar}")
+    if len(vc) > 5:
+        print(f"    ... and {len(vc) - 5} more unique values")
+ 
