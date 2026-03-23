@@ -9,6 +9,7 @@ from typing import List, Callable  #Callable means a function that can be passed
 
 from utils.logs import section, logger,data_root
 from data.raw.data_extraction import   validate_file, load_raw_data
+from data.data_inspectation.data_inspectation import data_inspectation
 
 
 
