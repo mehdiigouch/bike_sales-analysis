@@ -545,7 +545,13 @@ def export_flagged_rows(df: pd.DataFrame, output_path: str = "flagged_rows.csv")
 
 
 
-
+# ════════════════════════════════════════════════════════════
+# ENTRY POINT
+# ════════════════════════════════════════════════════════════
+ 
+if __name__ == "__main__":
+    FILE_PATH = "Sales.csv"         # ← Change path if needed
+    report = validate_dataset(FILE_PATH)
 
 
 
