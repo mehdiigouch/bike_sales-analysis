@@ -177,6 +177,371 @@ class ValidationReport:
 
 
 
+# ════════════════════════════════════════════════════════════
+# VALIDATION ENGINE
+# ════════════════════════════════════════════════════════════
+
+
+class DataValidator:
+    """
+    Runs a full suite of validation checks against the
+    Sales DataFrame and collects results into a ValidationReport.
+    """
+ 
+    def __init__(self, df: pd.DataFrame):
+        self.df     = df.copy()
+        self.n      = len(df)
+        self.report = ValidationReport()
+ 
+    def _add(self, rule: str, category: str, affected: int, threshold_warn: float = 0.0,
+             threshold_fail: float = 5.0, details: str = "") -> None:
+        pct = affected / self.n * 100
+        if affected == 0:
+            status = "PASS"
+        elif pct <= threshold_warn:
+            status = "PASS"
+        elif pct <= threshold_fail:
+            status = "WARN"
+        else:
+            status = "FAIL"
+        self.report.add(ValidationResult(rule, category, status, affected, self.n, details))
+ 
+    # ── 1. Schema Validation ─────────────────────────────────
+    def validate_schema(self) -> None:
+        logger.info("Running schema validation ...")
+ 
+        # 1A. Required columns present
+        missing_cols = [c for c in SCHEMA if c not in self.df.columns]
+        self._add(
+            rule     = "All required columns present",
+            category = "1. Schema",
+            affected = len(missing_cols),
+            threshold_fail = 0,
+            details  = f"Missing: {missing_cols}" if missing_cols else ""
+        )
+ 
+        # 1B. No unexpected extra columns
+        extra_cols = [c for c in self.df.columns if c not in SCHEMA]
+        self._add(
+            rule     = "No unexpected extra columns",
+            category = "1. Schema",
+            affected = len(extra_cols),
+            threshold_warn = 0,
+            threshold_fail = 0,
+            details  = f"Extra columns: {extra_cols}" if extra_cols else ""
+        )
+ 
+    # ── 2. Missing Values ────────────────────────────────────
+    def validate_missing(self) -> None:
+        logger.info("Running missing value validation ...")
+        for col, rules in SCHEMA.items():
+            if col not in self.df.columns:
+                continue
+            null_count = self.df[col].isnull().sum()
+            self._add(
+                rule     = f"No nulls in '{col}'",
+                category = "2. Missing Values",
+                affected = int(null_count),
+                threshold_warn = 0.1,
+                threshold_fail = 1.0,
+            )
+ 
+    # ── 3. Data Types ────────────────────────────────────────
+    def validate_dtypes(self) -> None:
+        logger.info("Running data type validation ...")
+ 
+        # Date parseable
+        try:
+            parsed = pd.to_datetime(self.df["Date"], dayfirst=True, errors="coerce")
+            invalid = int(parsed.isnull().sum())
+        except Exception:
+            invalid = self.n
+        self._add(
+            rule     = "'Date' column is parseable as datetime",
+            category = "3. Data Types",
+            affected = invalid,
+            threshold_fail = 0.5
+        )
+ 
+        # Integer columns contain numeric values
+        int_cols = ["Day","Year","Customer_Age","Order_Quantity",
+                    "Unit_Cost","Unit_Price","Profit","Cost","Revenue"]
+        for col in int_cols:
+            if col not in self.df.columns:
+                continue
+            non_numeric = self.df[col].apply(
+                lambda x: not str(x).lstrip("-").isdigit()
+            ).sum()
+            self._add(
+                rule     = f"'{col}' contains only numeric values",
+                category = "3. Data Types",
+                affected = int(non_numeric),
+                threshold_fail = 0
+            )
+ 
+    # ── 4. Allowed Values ────────────────────────────────────
+    def validate_allowed_values(self) -> None:
+        logger.info("Running allowed value validation ...")
+        for col, rules in SCHEMA.items():
+            if rules["allowed"] is None or col not in self.df.columns:
+                continue
+            invalid_mask = ~self.df[col].astype(str).isin(
+                [str(v) for v in rules["allowed"]]
+            )
+            invalid_vals = self.df.loc[invalid_mask, col].unique()[:5].tolist()
+            self._add(
+                rule     = f"'{col}' contains only allowed values",
+                category = "4. Allowed Values",
+                affected = int(invalid_mask.sum()),
+                threshold_fail = 0.5,
+                details  = f"Sample invalid: {invalid_vals}" if invalid_vals else ""
+            )
+ 
+    # ── 5. Numeric Range Checks ──────────────────────────────
+    def validate_ranges(self) -> None:
+        logger.info("Running numeric range validation ...")
+        for col, (lo, hi) in NUMERIC_RANGES.items():
+            if col not in self.df.columns:
+                continue
+            out_of_range = ((self.df[col] < lo) | (self.df[col] > hi)).sum()
+            self._add(
+                rule     = f"'{col}' within range [{lo:,} – {hi:,}]",
+                category = "5. Numeric Ranges",
+                affected = int(out_of_range),
+                threshold_warn = 0.5,
+                threshold_fail = 2.0
+            )
+ 
+    # ── 6. Business Logic Checks ─────────────────────────────
+    def validate_business_rules(self) -> None:
+        logger.info("Running business rule validation ...")
+        df = self.df
+ 
+        # Revenue = Cost + Profit
+        if all(c in df.columns for c in ["Revenue","Cost","Profit"]):
+            mismatch = ((df["Revenue"] - df["Cost"] - df["Profit"]).abs() > 1).sum()
+            self._add(
+                rule     = "Revenue == Cost + Profit",
+                category = "6. Business Logic",
+                affected = int(mismatch),
+                threshold_fail = 0.1
+            )
+ 
+        # Unit_Price >= Unit_Cost
+        if all(c in df.columns for c in ["Unit_Price","Unit_Cost"]):
+            violations = (df["Unit_Price"] < df["Unit_Cost"]).sum()
+            self._add(
+                rule     = "Unit_Price >= Unit_Cost",
+                category = "6. Business Logic",
+                affected = int(violations),
+                threshold_warn = 0.1,
+                threshold_fail = 1.0
+            )
+ 
+        # Negative profit rows
+        if "Profit" in df.columns:
+            neg_profit = (df["Profit"] < 0).sum()
+            self._add(
+                rule     = "Profit >= 0 (no loss-making orders)",
+                category = "6. Business Logic",
+                affected = int(neg_profit),
+                threshold_warn = 0.1,
+                threshold_fail = 2.0,
+                details  = "Negative profit may indicate discounts, returns, or data errors"
+            )
+ 
+        # Revenue > 0
+        if "Revenue" in df.columns:
+            zero_rev = (df["Revenue"] <= 0).sum()
+            self._add(
+                rule     = "Revenue > 0 for all rows",
+                category = "6. Business Logic",
+                affected = int(zero_rev),
+                threshold_fail = 0
+            )
+ 
+        # Order Quantity > 0
+        if "Order_Quantity" in df.columns:
+            zero_qty = (df["Order_Quantity"] <= 0).sum()
+            self._add(
+                rule     = "Order_Quantity > 0 for all rows",
+                category = "6. Business Logic",
+                affected = int(zero_qty),
+                threshold_fail = 0
+            )
+ 
+    # ── 7. Age Group Consistency ─────────────────────────────
+    def validate_age_consistency(self) -> None:
+        logger.info("Running age group consistency validation ...")
+        if not all(c in self.df.columns for c in ["Customer_Age","Age_Group"]):
+            return
+ 
+        inconsistent = 0
+        for group, (lo, hi) in AGE_GROUP_RULES.items():
+            mask = self.df["Age_Group"] == group
+            wrong = mask & ~self.df["Customer_Age"].between(lo, hi)
+            inconsistent += wrong.sum()
+ 
+        self._add(
+            rule     = "Customer_Age matches Age_Group label",
+            category = "7. Consistency",
+            affected = int(inconsistent),
+            threshold_warn = 0.1,
+            threshold_fail = 1.0,
+            details  = "Age does not match the assigned age group bucket"
+        )
+ 
+        # Day consistent with month (e.g., no Feb 30)
+        if all(c in self.df.columns for c in ["Day","Month","Year"]):
+            try:
+                date_str = (
+                    self.df["Year"].astype(str) + "-" +
+                    self.df["Month"].astype(str) + "-" +
+                    self.df["Day"].astype(str)
+                )
+                parsed = pd.to_datetime(date_str, format="%Y-%B-%d", errors="coerce")
+                invalid_days = parsed.isnull().sum()
+                self._add(
+                    rule     = "Day/Month/Year form a valid calendar date",
+                    category = "7. Consistency",
+                    affected = int(invalid_days),
+                    threshold_fail = 0.5
+                )
+            except Exception:
+                pass
+ 
+    # ── 8. Duplicate Check ───────────────────────────────────
+    def validate_duplicates(self) -> None:
+        logger.info("Running duplicate validation ...")
+        n_dupes = int(self.df.duplicated().sum())
+        self._add(
+            rule     = "No fully duplicate rows",
+            category = "8. Duplicates",
+            affected = n_dupes,
+            threshold_warn = 0.1,
+            threshold_fail = 1.0,
+            details  = "Drop with df.drop_duplicates() in cleaning step"
+        )
+ 
+    # ── 9. Date Range Check ──────────────────────────────────
+    def validate_date_range(self) -> None:
+        logger.info("Running date range validation ...")
+        try:
+            parsed = pd.to_datetime(self.df["Date"], dayfirst=True, errors="coerce")
+ 
+            # Dates in expected business range
+            out_of_range = ((parsed.dt.year < 2011) | (parsed.dt.year > 2016)).sum()
+            self._add(
+                rule     = "All dates fall within 2011–2016 range",
+                category = "9. Date Integrity",
+                affected = int(out_of_range),
+                threshold_fail = 0.5
+            )
+ 
+            # Year column matches Date year
+            if "Year" in self.df.columns:
+                mismatch = (parsed.dt.year != self.df["Year"]).sum()
+                self._add(
+                    rule     = "'Year' column matches year in 'Date'",
+                    category = "9. Date Integrity",
+                    affected = int(mismatch),
+                    threshold_fail = 0.1
+                )
+ 
+            # Month column matches Date month
+            if "Month" in self.df.columns:
+                month_map = {
+                    1:"January",2:"February",3:"March",4:"April",
+                    5:"May",6:"June",7:"July",8:"August",
+                    9:"September",10:"October",11:"November",12:"December"
+                }
+                derived_month = parsed.dt.month.map(month_map)
+                mismatch_month = (derived_month != self.df["Month"]).sum()
+                self._add(
+                    rule     = "'Month' column matches month in 'Date'",
+                    category = "9. Date Integrity",
+                    affected = int(mismatch_month),
+                    threshold_fail = 0.1
+                )
+ 
+            # Day column matches Date day
+            if "Day" in self.df.columns:
+                mismatch_day = (parsed.dt.day != self.df["Day"]).sum()
+                self._add(
+                    rule     = "'Day' column matches day in 'Date'",
+                    category = "9. Date Integrity",
+                    affected = int(mismatch_day),
+                    threshold_fail = 0.1
+                )
+        except Exception as e:
+            logger.warning(f"Date range validation skipped: {e}")
+
+ 
+    # ── RUN ALL ──────────────────────────────────────────────
+    def run_all(self) -> ValidationReport:
+        """Execute all validation checks and return the full report."""
+        self.validate_schema()
+        self.validate_missing()
+        self.validate_dtypes()
+        self.validate_allowed_values()
+        self.validate_ranges()
+        self.validate_business_rules()
+        self.validate_age_consistency()
+        self.validate_duplicates()
+        self.validate_date_range()
+        return self.report
+
+
+
+
+# ════════════════════════════════════════════════════════════
+# HELPER — FAILED ROWS EXPORT
+# ══════════════════════════════════════════════
+def export_flagged_rows(df: pd.DataFrame, output_path: str = "flagged_rows.csv") -> None:
+    """
+    Export all rows with known data quality issues to a CSV
+    for manual review or downstream fixing.
+ 
+    Parameters
+    ----------
+    df          : Raw DataFrame
+    output_path : Where to save flagged rows
+    """
+    section("EXPORTING FLAGGED ROWS")
+    flags = pd.Series([""] * len(df), index=df.index)
+ 
+    # Negative profit
+    mask_neg  = df["Profit"] < 0
+    flags[mask_neg] += "negative_profit|"
+ 
+    # Duplicates
+    mask_dup  = df.duplicated(keep=False)
+    flags[mask_dup] += "duplicate|"
+ 
+    # Revenue ≠ Cost + Profit
+    mask_rev  = (df["Revenue"] - df["Cost"] - df["Profit"]).abs() > 1
+    flags[mask_rev] += "revenue_mismatch|"
+ 
+    # Age group mismatch
+    for group, (lo, hi) in AGE_GROUP_RULES.items():
+        m = (df["Age_Group"] == group) & ~df["Customer_Age"].between(lo, hi)
+        flags[m] += "age_group_mismatch|"
+ 
+    flagged = df[flags != ""].copy()
+    flagged["issue_flags"] = flags[flags != ""].str.rstrip("|")
+ 
+    if flagged.empty:
+        logger.info("✔ No flagged rows to export — dataset is clean!")
+    else:
+        flagged.to_csv(output_path, index=False)
+        logger.info(f"⚠ {len(flagged):,} flagged rows exported → '{output_path}'")
+        logger.info(f"  Issue breakdown:")
+        for issue in ["negative_profit", "duplicate", "revenue_mismatch", "age_group_mismatch"]:
+            count = flagged["issue_flags"].str.contains(issue).sum()
+            if count:
+                logger.info(f"    • {issue:<30} {count:,} rows")
+ 
+
 
 
 
