@@ -91,7 +91,10 @@ AGE_GROUP_RULES = {
     "Seniors (64+)"       : (65, 120),
 }
  
-
+# ════════════════════════════════════════════════════════════
+# VALIDATION RESULT DATACLASS
+# ════════════════════════════════════════════════════════════
+ 
 
 
 @dataclass
@@ -111,6 +114,65 @@ class ValidationResult:
     def icon(self) -> str:
         return {"PASS": "✔", "WARN": "⚠", "FAIL": "✖"}[self.status]
  
+
+ 
+
+# ════════════════════════════════════════════════════════════
+# VALIDATION REPORT DATACLASS
+# ════════════════════════════════════════════════════════════
+ 
+
+
+@dataclass
+class ValidationReport:
+    results : List[ValidationResult] = field(default_factory=list)
+ 
+    def add(self, result: ValidationResult) -> None:
+        self.results.append(result)
+ 
+    @property
+    def passed(self)  -> List[ValidationResult]: return [r for r in self.results if r.status == "PASS"]
+    @property
+    def warnings(self) -> List[ValidationResult]: return [r for r in self.results if r.status == "WARN"]
+    @property
+    def failures(self) -> List[ValidationResult]: return [r for r in self.results if r.status == "FAIL"]
+ 
+    def print_summary(self) -> None:
+        section("VALIDATION SUMMARY")
+        total   = len(self.results)
+        n_pass  = len(self.passed)
+        n_warn  = len(self.warnings)
+        n_fail  = len(self.failures)
+ 
+        print(f"\n  Total Rules Checked : {total}")
+        print(f"  ✔  Passed           : {n_pass}")
+        print(f"  ⚠  Warnings         : {n_warn}")
+        print(f"  ✖  Failed           : {n_fail}")
+ 
+        if n_fail == 0 and n_warn == 0:
+            print(f"\n  🎉 Dataset passed ALL validation rules — ready for cleaning & EDA!")
+        elif n_fail == 0:
+            print(f"\n  ✅ No critical failures. Review {n_warn} warning(s) before proceeding.")
+        else:
+            print(f"\n  🚨 {n_fail} critical failure(s) detected — fix before analysis!")
+ 
+        # Overall score
+        score = round((n_pass + n_warn * 0.5) / total * 100, 1)
+        bar_filled = int(score / 5)
+        bar = "█" * bar_filled + "░" * (20 - bar_filled)
+        print(f"\n  Data Quality Score  : [{bar}]  {score}%")
+ 
+    def print_details(self) -> None:
+        categories = sorted(set(r.category for r in self.results))
+        for cat in categories:
+            cat_results = [r for r in self.results if r.category == cat]
+            section(f"CATEGORY: {cat}")
+            for r in cat_results:
+                flag = f"({r.affected:,} rows / {r.pct}%)" if r.affected > 0 else ""
+                print(f"  {r.icon}  [{r.status:<4}]  {r.rule:<45} {flag}")
+                if r.details and r.status != "PASS":
+                    for line in r.details.split("\n"):
+                        print(f"           → {line}")
 
 
 
