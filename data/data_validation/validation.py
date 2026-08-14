@@ -97,71 +97,101 @@ AGE_GROUP_RULES = {
  
 
 
+VALID_STATUSES = {"PASS", "WARN", "FAIL"}
+
 @dataclass
 class ValidationResult:
     rule        : str
     category    : str
-    status      : str          
+    status      : str
     affected    : int = 0
     total       : int = 0
     details     : str = ""
- 
+
+    def __post_init__(self):
+        # Guard 1 — status must be a known value
+        if self.status not in VALID_STATUSES:
+            raise ValueError(
+                f"Invalid status '{self.status}'. Must be one of {VALID_STATUSES}"
+            )
+        # Guard 2 — affected cannot be negative
+        if self.affected < 0:
+            raise ValueError(
+                f"'affected' cannot be negative, got {self.affected}"
+            )
+        # Guard 3 — affected cannot exceed total
+        if self.total > 0 and self.affected > self.total:
+            raise ValueError(
+                f"'affected' ({self.affected}) cannot exceed 'total' ({self.total})"
+            )
+
     @property
     def pct(self) -> float:
         return round(self.affected / self.total * 100, 2) if self.total else 0.0
- 
+
     @property
     def icon(self) -> str:
-        return {"PASS": "✔", "WARN": "⚠", "FAIL": "✖"}[self.status]
- 
-
- 
+        return {"PASS": "✔", "WARN": "⚠", "FAIL": "✖"}.get(self.status, "?")
 
 # ════════════════════════════════════════════════════════════
 # VALIDATION REPORT DATACLASS
 # ════════════════════════════════════════════════════════════
  
 
-
 @dataclass
 class ValidationReport:
-    results : List[ValidationResult] = field(default_factory=list)
- 
+    results: List[ValidationResult] = field(default_factory=list)
+
     def add(self, result: ValidationResult) -> None:
+        # Fix 2 — enforce correct type at insertion
+        if not isinstance(result, ValidationResult):
+            raise TypeError(
+                f"Expected ValidationResult, got {type(result).__name__}"
+            )
         self.results.append(result)
- 
+
     @property
-    def passed(self)  -> List[ValidationResult]: return [r for r in self.results if r.status == "PASS"]
+    def passed(self)   -> List[ValidationResult]: return [r for r in self.results if r.status == "PASS"]
     @property
     def warnings(self) -> List[ValidationResult]: return [r for r in self.results if r.status == "WARN"]
     @property
     def failures(self) -> List[ValidationResult]: return [r for r in self.results if r.status == "FAIL"]
- 
+
     def print_summary(self) -> None:
         section("VALIDATION SUMMARY")
-        total   = len(self.results)
-        n_pass  = len(self.passed)
-        n_warn  = len(self.warnings)
-        n_fail  = len(self.failures)
- 
+        total = len(self.results)
+
+        # Fix 1 — guard against empty report
+        if total == 0:
+            print("  ⚠ No validation rules were run.")
+            return
+
+        n_pass = len(self.passed)
+        n_warn = len(self.warnings)
+        n_fail = len(self.failures)
+
         print(f"\n  Total Rules Checked : {total}")
         print(f"  ✔  Passed           : {n_pass}")
         print(f"  ⚠  Warnings         : {n_warn}")
         print(f"  ✖  Failed           : {n_fail}")
- 
+
         if n_fail == 0 and n_warn == 0:
             print(f"\n  🎉 Dataset passed ALL validation rules — ready for cleaning & EDA!")
         elif n_fail == 0:
             print(f"\n  ✅ No critical failures. Review {n_warn} warning(s) before proceeding.")
         else:
             print(f"\n  🚨 {n_fail} critical failure(s) detected — fix before analysis!")
- 
-        # Overall score
-        score = round((n_pass + n_warn * 0.5) / total * 100, 1)
+
+        # Fix 3 — warn if any results have unknown status
+        accounted = n_pass + n_warn + n_fail
+        if accounted != total:
+            logger.warning(f"⚠ {total - accounted} result(s) have unrecognised status and were excluded from score")
+
+        score      = round((n_pass + n_warn * 0.5) / total * 100, 1)
         bar_filled = int(score / 5)
-        bar = "█" * bar_filled + "░" * (20 - bar_filled)
+        bar        = "█" * bar_filled + "░" * (20 - bar_filled)
         print(f"\n  Data Quality Score  : [{bar}]  {score}%")
- 
+
     def print_details(self) -> None:
         categories = sorted(set(r.category for r in self.results))
         for cat in categories:
@@ -170,7 +200,8 @@ class ValidationReport:
             for r in cat_results:
                 flag = f"({r.affected:,} rows / {r.pct}%)" if r.affected > 0 else ""
                 print(f"  {r.icon}  [{r.status:<4}]  {r.rule:<45} {flag}")
-                if r.details and r.status != "PASS":
+                # Fix 4 — show details for all statuses when present
+                if r.details and (r.status != "PASS" or r.affected > 0):
                     for line in r.details.split("\n"):
                         print(f"           → {line}")
 
@@ -494,9 +525,11 @@ class DataValidator:
 
 
 
+
 # ════════════════════════════════════════════════════════════
 # HELPER — FAILED ROWS EXPORT
-# ══════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════
+ 
 def export_flagged_rows(df: pd.DataFrame, output_path: str = "flagged_rows.csv") -> None:
     """
     Export all rows with known data quality issues to a CSV
@@ -540,9 +573,65 @@ def export_flagged_rows(df: pd.DataFrame, output_path: str = "flagged_rows.csv")
             count = flagged["issue_flags"].str.contains(issue).sum()
             if count:
                 logger.info(f"    • {issue:<30} {count:,} rows")
+
+
+
+
+
+# ════════════════════════════════════════════════════════════
+# MAIN PIPELINE
+# ════════════════════════════════════════════════════════════
  
-
-
+def validate_dataset(file_path: str) -> ValidationReport:
+    """
+    Full dataset validation pipeline.
+ 
+    Parameters
+    ----------
+    file_path : str
+        Path to Sales.csv
+ 
+    Returns
+    -------
+    ValidationReport
+        Complete report with all rule results.
+    """
+    print(f"\n{'=' * 65}")
+    print("   BIKE SALES — PROFESSIONAL DATA VALIDATION PIPELINE")
+    print(f"{'=' * 65}")
+ 
+    # Load
+    path = Path(file_path)
+    if not path.exists():
+        logger.critical(f"File not found: {file_path}")
+        sys.exit(1)
+ 
+    logger.info(f"Loading dataset: {path.name}")
+    df = pd.read_csv(file_path)
+    logger.info(f"Loaded {df.shape[0]:,} rows × {df.shape[1]} columns")
+ 
+    # Run validation
+    validator = DataValidator(df)
+    report    = validator.run_all()
+ 
+    # Print detailed results
+    report.print_details()
+ 
+    # Print summary
+    report.print_summary()
+ 
+    # Export flagged rows
+    flagged_path = "/home/claude/flagged_rows.csv"
+    export_flagged_rows(df, output_path=flagged_path)
+ 
+    # Exit with error code if critical failures found
+    if report.failures:
+        logger.error(f"Validation completed with {len(report.failures)} FAILURE(S)")
+    else:
+        logger.info("Validation completed successfully ✅")
+ 
+    return report
+ 
 
 
 # ════════════════════════════════════════════════════════════
